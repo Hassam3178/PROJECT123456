@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Tactical Telemetry — Steam Analytics</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Inter:wght@400;600;800&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bf-orange: #ff5f1f;
+      --bf-orange-glow: rgba(255, 95, 31, 0.35);
+      --cod-green: #00ff88;
+      --hud-cyan: #00e5ff;
+      --hud-cyan-glow: rgba(0, 229, 255, 0.25);
+      --bg-dark: #090b10;
+      --panel-bg: rgba(16, 20, 29, 0.85);
+      --panel-border: rgba(255, 255, 255, 0.12);
+      --text-main: #d8e2f2;
+      --text-muted: #8393a8;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 50% 30%, rgba(255, 95, 31, 0.05) 0%, transparent 60%),
+        linear-gradient(rgba(9, 11, 16, 0.93), rgba(9, 11, 16, 0.97)),
+        url("https://images.unsplash.com/photo-1538481199705-c710c4e965fc?q=80&w=2070&auto=format&fit=crop");
+      background-size: cover;
+      background-attachment: fixed;
+      background-position: center;
+      color: var(--text-main);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* HUD SCANLINES & ACCENTS */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+      background-size: 100% 4px;
+      z-index: 9999;
+      pointer-events: none;
+      opacity: 0.4;
+    }
+
+    /* HERO SECTION */
+    #hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 0 20px;
+      position: relative;
+    }
+
+    .hud-tag {
+      font-family: 'Share Tech Mono', monospace;
+      color: var(--bf-orange);
+      background: rgba(255, 95, 31, 0.1);
+      border: 1px solid var(--bf-orange);
+      padding: 8px 20px;
+      font-size: 0.85rem;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      margin-bottom: 24px;
+      box-shadow: 0 0 15px var(--bf-orange-glow);
+    }
+
+    #hero h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(2.5rem, 7vw, 5.5rem);
+      font-weight: 900;
+      letter-spacing: 2px;
+      line-height: 1.1;
+      margin-bottom: 20px;
+      text-transform: uppercase;
+      background: linear-gradient(135deg, #ffffff 30%, var(--bf-orange) 80%, var(--hud-cyan));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 4px 12px rgba(0,0,0,0.8));
+    }
+
+    .hero-briefing {
+      max-width: 800px;
+      font-size: 1.15rem;
+      line-height: 1.7;
+      color: var(--text-main);
+      margin-bottom: 40px;
+      border-left: 3px solid var(--hud-cyan);
+      padding-left: 15px;
+      text-align: left;
+      background: rgba(0, 229, 255, 0.03);
+      padding: 15px 20px;
+    }
+
+    /* TACTICAL STAT STRIP */
+    .telemetry-strip {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 15px;
+      width: 100%;
+      max-width: 1200px;
+      margin-top: 20px;
+    }
+
+    .telemetry-box {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-top: 2px solid var(--bf-orange);
+      padding: 20px 25px;
+      min-width: 200px;
+      flex: 1;
+      position: relative;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+
+    .telemetry-box::after {
+      content: "+";
+      position: absolute;
+      bottom: 2px;
+      right: 5px;
+      color: var(--text-muted);
+      font-family: monospace;
+      font-size: 10px;
+    }
+
+    .telemetry-val {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--hud-cyan);
+      margin-bottom: 5px;
+    }
+
+    .telemetry-lbl {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+    }
+
+    .scroll-down {
+      margin-top: 60px;
+      font-family: 'Share Tech Mono', monospace;
+      color: var(--hud-cyan);
+      letter-spacing: 3px;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.5; transform: translateY(0); }
+      50% { opacity: 1; transform: translateY(8px); }
+    }
+
+    /* MAIN CONTAINER */
+    .container {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+      gap: 30px;
+      margin-bottom: 40px;
+    }
+
+    /* CHART PANELS */
+    .tactical-panel {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      position: relative;
+      padding: 30px;
+      backdrop-filter: blur(12px);
+      margin-bottom: 40px;
+      transition: all 0.3s ease;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    }
+
+    /* HUD CORNER ACCENTS */
+    .tactical-panel::before, .tactical-panel::after {
+      content: "";
+      position: absolute;
+      width: 15px;
+      height: 15px;
+      border-color: var(--hud-cyan);
+      border-style: solid;
+      pointer-events: none;
+      transition: border-color 0.3s;
+    }
+    .tactical-panel::before { top: 0; left: 0; border-width: 2px 0 0 2px; }
+    .tactical-panel::after  { bottom: 0; right: 0; border-width: 0 2px 2px 0; }
+
+    .tactical-panel:hover {
+      border-color: rgba(255, 95, 31, 0.5);
+      box-shadow: 0 10px 40px var(--bf-orange-glow);
+    }
+    .tactical-panel:hover::before, .tactical-panel:hover::after {
+      border-color: var(--bf-orange);
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      padding-bottom: 15px;
+      margin-bottom: 20px;
+    }
+
+    .panel-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.25rem;
+      color: #ffffff;
+      letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .panel-title::before {
+      content: "▶";
+      color: var(--bf-orange);
+      font-size: 0.9rem;
+    }
+
+    /* INTERACTIVE HOVER BRIEFING */
+    .briefing-box {
+      background: rgba(255, 95, 31, 0.08);
+      border-left: 3px solid var(--bf-orange);
+      padding: 14px 18px;
+      font-size: 0.9rem;
+      line-height: 1.6;
+      color: #e2e8f0;
+      margin-bottom: 25px;
+      transition: all 0.3s ease;
+    }
+
+    .tactical-panel:hover .briefing-box {
+      background: rgba(0, 229, 255, 0.12);
+      border-left-color: var(--hud-cyan);
+      color: #ffffff;
+      box-shadow: inset 0 0 15px var(--hud-cyan-glow);
+    }
+
+    .briefing-label {
+      font-family: 'Share Tech Mono', monospace;
+      color: var(--bf-orange);
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      display: block;
+      margin-bottom: 4px;
+      letter-spacing: 1px;
+    }
+    .tactical-panel:hover .briefing-label {
+      color: var(--hud-cyan);
+    }
+
+    /* CONTROLS & FILTERS */
+    .filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    .btn-tactical {
+      background: rgba(16, 20, 29, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: var(--text-muted);
+      padding: 6px 14px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-transform: uppercase;
+    }
+
+    .btn-tactical:hover, .btn-tactical.active {
+      background: var(--bf-orange);
+      color: #000000;
+      border-color: var(--bf-orange);
+      font-weight: bold;
+      box-shadow: 0 0 10px var(--bf-orange-glow);
+    }
+
+    /* D3 AXES & SVG STYLING */
+    .axis text { fill: var(--text-muted); font-size: 11px; font-family: 'Share Tech Mono', monospace; }
+    .axis path, .axis line { stroke: rgba(255, 255, 255, 0.1); }
+    .grid-line { stroke: rgba(255, 255, 255, 0.04); stroke-dasharray: 4 4; }
+    .axis-label { fill: var(--text-main); font-size: 12px; font-family: 'Share Tech Mono', monospace; letter-spacing: 1px; }
+
+    /* TOOLTIP */
+    #hud-tooltip {
+      position: fixed;
+      background: rgba(9, 11, 16, 0.95);
+      border: 1px solid var(--hud-cyan);
+      padding: 16px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      width: 280px;
+      z-index: 10000;
+      backdrop-filter: blur(15px);
+      box-shadow: 0 0 25px rgba(0, 229, 255, 0.3);
+    }
+    #hud-tooltip::before {
+      content: "[TELEMETRY LOCK]";
+      display: block;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.7rem;
+      color: var(--bf-orange);
+      margin-bottom: 8px;
+    }
+    #hud-tooltip h4 { font-family: 'Orbitron', sans-serif; color: #ffffff; margin-bottom: 8px; font-size: 1rem; }
+    #hud-tooltip p { font-size: 0.8rem; margin-bottom: 5px; color: var(--text-main); display: flex; justify-content: space-between; }
+    #hud-tooltip .highlight { color: var(--hud-cyan); font-weight: bold; font-family: monospace;}
+    #hud-tooltip .verdict { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 0.75rem; color: var(--cod-green); }
+
+    /* INTEL SUMMARY CARDS */
+    .intel-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 25px;
+      margin-top: 20px;
+    }
+
+    .intel-card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.4));
+      border: 1px solid rgba(255,255,255,0.08);
+      border-top: 2px solid var(--hud-cyan);
+      padding: 25px;
+      position: relative;
+    }
+
+    .intel-card h3 {
+      font-family: 'Orbitron', sans-serif;
+      color: #ffffff;
+      font-size: 1.1rem;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .intel-card p { font-size: 0.9rem; line-height: 1.7; color: var(--text-muted); }
+
+    .legend-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-family: 'Share Tech Mono', monospace; }
+    .legend-box { width: 12px; height: 12px; border-radius: 2px; }
+
+    @media (max-width: 860px) {
+      .grid-2 { grid-template-columns: 1fr; }
+      #hero h1 { font-size: 2.2rem; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="hud-tooltip"></div>
+
+<section id="hero">
+  <div class="hud-tag">SYSTEM CALIBRATED // DATASET 2024–2026</div>
+  <h1>The Price of Popularity</h1>
+  <div class="hero-briefing">
+    <span style="color: var(--hud-cyan); font-family: 'Share Tech Mono', monospace; display: block; margin-bottom: 5px;">[ANALYTICAL OBJECTIVE]</span>
+    Are premium $60–$70 blockbuster multiplayer titles genuinely satisfying the gaming community, or does focused, lower-priced singleplayer design deliver significantly superior player approval? Let the empirical telemetry decide.
+  </div>
+
+  <div class="telemetry-strip" id="overall-metrics">
+    <div class="telemetry-box">
+      <div class="telemetry-val" id="stat-total">0</div>
+      <div class="telemetry-lbl">Analyzed Assets</div>
+    </div>
+    <div class="telemetry-box">
+      <div class="telemetry-val" id="stat-avg-score">0%</div>
+      <div class="telemetry-lbl">Mean Satisfaction</div>
+    </div>
+    <div class="telemetry-box">
+      <div class="telemetry-val" id="stat-avg-price">$0</div>
+      <div class="telemetry-lbl">Mean Premium Price</div>
+    </div>
+    <div class="telemetry-box">
+      <div class="telemetry-val" id="stat-top-rated">-</div>
+      <div class="telemetry-lbl">Peak Approval Target</div>
+    </div>
+  </div>
+
+  <div class="scroll-down">▼ INITIALIZE VISUALIZATIONS ▼</div>
+</section>
+
+<div class="container">
+
+  <div class="tactical-panel">
+    <div class="panel-header">
+      <div class="panel-title">ASSET PRICING VS. PLAYER SATISFACTION</div>
+    </div>
+    
+    <div class="briefing-box">
+      <span class="briefing-label">Interactive Visualizer Impact</span>
+      <strong>Hover to reveal target specs:</strong> This bubble matrix maps market price against player approval. Bubble size represents total estimated owners. Notice how massive user bases concentrate around free/budget tiers, while expensive $70 releases frequently trigger volatile, lower review scores due to extreme performance expectations.
+    </div>
+
+    <div class="filter-bar" id="bubble-filters"></div>
+    <div class="legend-container" id="bubble-legend"></div>
+    <div id="chart-bubble"></div>
+  </div>
+
+  <div class="grid-2">
+    
+    <div class="tactical-panel">
+      <div class="panel-header">
+        <div class="panel-title">APPROVAL RATING BY GENRE</div>
+      </div>
+      <div class="briefing-box">
+        <span class="briefing-label">Interactive Visualizer Impact</span>
+        Displays average positive review percentages by genre. Hovering over any structural bar pinpoints categories that consistently exceed or betray community quality standards.
+      </div>
+      <div id="chart-score-genre"></div>
+    </div>
+
+    <div class="tactical-panel">
+      <div class="panel-header">
+        <div class="panel-title">PREMIUM COST BY GENRE</div>
+      </div>
+      <div class="briefing-box">
+        <span class="briefing-label">Interactive Visualizer Impact</span>
+        Exposes the mean entry cost per category. Contrast this directly with the satisfaction ratings to identify market sectors exhibiting bloated price-to-quality ratios.
+      </div>
+      <div id="chart-price-genre"></div>
+    </div>
+
+  </div>
+
+  <div class="tactical-panel">
+    <div class="panel-header">
+      <div class="panel-title">POPULARITY MASS VS. APPROVAL TELEMETRY</div>
+    </div>
+    <div class="briefing-box">
+      <span class="briefing-label">Interactive Visualizer Impact</span>
+      Does attracting an army of players guarantee success? This logarithmic deployment charts audience scale against satisfaction percentages, color-coded by market tier. Hovering highlights the exact threshold where live-service server strain and player burnout degrade review scores.
+    </div>
+    <div class="legend-container" id="owners-legend"></div>
+    <div id="chart-owners"></div>
+  </div>
+
+  <div class="tactical-panel">
+    <div class="panel-header">
+      <div class="panel-title">MACRO SATISFACTION DISTRIBUTION</div>
+    </div>
+    <div class="briefing-box">
+      <span class="briefing-label">Interactive Visualizer Impact</span>
+      Aggregates the community's overall sentiment. Hover across the frequency bins to reveal the volume of titles achieving highly positive status versus those caught in the review-bombing crossfire.
+    </div>
+    <div id="chart-histogram"></div>
+  </div>
+
+  <div class="tactical-panel" style="margin-top: 60px;">
+    <div class="panel-header">
+      <div class="panel-title">TACTICAL DATA RECON // KEY TAKEAWAYS</div>
+    </div>
+    <div class="briefing-box">
+      <span class="briefing-label">Strategic Overview</span>
+      Empirical patterns extracted directly from live telemetry, refuting conventional corporate assumptions regarding player retention and pricing architectures.
+    </div>
+
+    <div class="intel-grid">
+      <div class="intel-card">
+        <h3 style="color: var(--bf-orange);">⚠️ Live-Service Fatigue</h3>
+        <p>Massive multiplayer infrastructures gather millions of initial active operators, but chronic server instability, unrefined weapon balance, and aggressive monetization regularly drive satisfaction percentages well beneath the baseline mean.</p>
+      </div>
+      <div class="intel-card">
+        <h3 style="color: var(--cod-green);">🎯 Scope & Polish Mastery</h3>
+        <p>The highest-rated deployments almost exclusively populate the sub-$25 indie brackets. Tighter mechanical focuses, transparent developer communication, and complete out-of-the-box experiences secure overwhelming community loyalty.</p>
+      </div>
+      <div class="intel-card">
+        <h3 style="color: var(--hud-cyan);">💸 Premium Expectation Traps</h3>
+        <p>Deployments commanding a premium $60–$70 entry cost face immense critical friction. Community operators paying high entry fees demand flawless optimization, penalizing technical bugs far more aggressively than budget releases.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// --- GLOBAL HUD TOOLTIP CONTROLLER ---
+const tooltip = d3.select("#hud-tooltip");
+
+function triggerTooltip(event, content) {
+  tooltip.style("opacity", 1).html(content);
+  repositionTooltip(event);
+}
+
+function repositionTooltip(event) {
+  const x = event.clientX, y = event.clientY;
+  const width = 296, offset = 15;
+  tooltip
+    .style("left", (x + offset + width > window.innerWidth ? x - width - offset : x + offset) + "px")
+    .style("top", Math.max(10, y - 20) + "px");
+}
+
+function clearTooltip() {
+  tooltip.style("opacity", 0);
+}
+
+// --- TACTICAL COLOR ASSIGNMENTS ---
+const colourPalette = ["#ff5f1f", "#00e5ff", "#00ff88", "#ffd166", "#ff5ca8", "#b5838d", "#a8dadc", "#e63946", "#80b918", "#7c6cff"];
+const genreScale = d3.scaleOrdinal().range(colourPalette);
+
+const tierColours = {
+  "Free Operation": "#00ff88",
+  "Budget Tier": "#00e5ff",
+  "Mid-Market": "#ffd166",
+  "Premium AAA": "#ff5f1f"
+};
+
+function assignTier(price) {
+  if (price === 0) return "Free Operation";
+  if (price < 20)  return "Budget Tier";
+  if (price <= 45) return "Mid-Market";
+  return "Premium AAA";
+}
+
+// --- SECURE CONTAINER DIMENSION CHECK ---
+function getSafeWidth(elementId) {
+  const el = document.getElementById(elementId);
+  if (!el) return 700;
+  return Math.max(300, el.getBoundingClientRect().width || 700);
+}
+
+// --- POPULATE DYNAMIC HUD LEGENDS ---
+function renderLegend(containerId, entries) {
+  const target = document.getElementById(containerId);
+  if (!target) return;
+  target.innerHTML = entries.map(([label, color]) => `
+    <div class="legend-item">
+      <div class="legend-box" style="background-color: ${color};"></div>
+      <span style="color: #cbd5e1;">${label}</span>
+    </div>
+  `).join("");
+}
+
+// --- ROBUST CSV ACQUISITION (WITH AUTO-FALLBACK) ---
+function retrieveTelemetry() {
+  // First attempt standard file name
+  return d3.csv("steam_games_2026.csv").catch(() => {
+    console.warn("Primary CSV missing. Re-routing to alternate identifier: steamgames2026.csv");
+    // Fall back to un-underscored version if hosted differently
+    return d3.csv("steamgames2026.csv");
+  });
+}
+
+// --- CORE SYSTEM INITIALIZATION ---
+retrieveTelemetry().then(rawCSV => {
+  
+  // Clean and parse empirical payload
+  const dataset = rawCSV.map(row => ({
+    id: +row.AppID || 0,
+    name: row.Name || "UNIDENTIFIED ASSET",
+    genre: row.Primary_Genre || "Unclassified",
+    price: +row.Price_USD || 0,
+    score: +row.Review_Score_Pct || 0,
+    reviews: +row.Total_Reviews || 0,
+    owners: +row.Estimated_Owners || 0,
+    peak: +row["24h_Peak_Players"] || 0
+  }));
+
+  // Populate HUD telemetry numbers
+  const validReviews = dataset.filter(a => a.reviews > 0 && a.score > 0);
+  const averageScore = d3.mean(validReviews, a => a.score) || 0;
+  const paidAssets   = dataset.filter(a => a.price > 0);
+  const averagePrice = d3.mean(paidAssets, a => a.price) || 0;
+  
+  let peakAsset = dataset[0];
+  validReviews.forEach(a => { if (a.score > peakAsset.score) peakAsset = a; });
+
+  document.getElementById("stat-total").textContent = dataset.length.toLocaleString();
+  document.getElementById("stat-avg-score").textContent = averageScore.toFixed(1) + "%";
+  document.getElementById("stat-avg-price").textContent = "$" + averagePrice.toFixed(2);
+  document.getElementById("stat-top-rated").textContent = peakAsset ? peakAsset.name : "N/A";
+
+  // Cache genre categories
+  const existingGenres = [...new Set(validReviews.map(a => a.genre))].sort();
+  genreScale.domain(existingGenres);
+
+  // ================= RENDER CHART 1: BUBBLE MATRIX =================
+  function renderBubbleScatter() {
+    const validAssets = validReviews.filter(a => a.reviews >= 20);
+    const filterWrap = document.getElementById("bubble-filters");
+    let activeSelection = "ALL SECTORS";
+
+    function refreshControls() {
+      if (!filterWrap) return;
+      filterWrap.innerHTML = "";
+      ["ALL SECTORS", ...existingGenres].forEach(genreName => {
+        const btn = document.createElement("button");
+        btn.className = "btn-tactical" + (genreName === activeSelection ? " active" : "");
+        btn.textContent = genreName;
+        btn.onclick = () => { activeSelection = genreName; refreshControls(); drawMatrix(); };
+        filterWrap.appendChild(btn);
+      });
+    }
+
+    renderLegend("bubble-legend", existingGenres.map(g => [g, genreScale(g)]));
+
+    const margin = { top: 20, right: 20, bottom: 60, left: 60 };
+    const height = 450;
+
+    function drawMatrix() {
+      const containerW = getSafeWidth("chart-bubble");
+      const width = containerW - margin.left - margin.right;
+      
+      const wrap = d3.select("#chart-bubble");
+      wrap.selectAll("*").remove();
+
+      const svg = wrap.append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      const targets = activeSelection === "ALL SECTORS" ? validAssets : validAssets.filter(a => a.genre === activeSelection);
+
+      const xScale = d3.scaleLinear().domain([0, d3.max(validAssets, a => a.price) || 75]).range([0, width]);
+      const yScale = d3.scaleLinear().domain([0, 100]).range([height, 0]);
+      const rScale = d3.scaleSqrt().domain([0, d3.max(validAssets, a => a.owners) || 10000000]).range([4, 38]);
+
+      // Grid generation
+      svg.append("g").selectAll("line").data(yScale.ticks(5)).enter().append("line")
+        .attr("class", "grid-line").attr("x1", 0).attr("x2", width)
+        .attr("y1", d => yScale(d)).attr("y2", d => yScale(d));
+        
+      svg.append("g").selectAll("line").data(xScale.ticks(8)).enter().append("line")
+        .attr("class", "grid-line").attr("x1", d => xScale(d)).attr("x2", d => xScale(d))
+        .attr("y1", 0).attr("y2", height);
+
+      // Axes installation
+      svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(xScale).tickFormat(d => d === 0 ? "FREE" : "$" + d));
+        
+      svg.append("g").attr("class", "axis")
+        .call(d3.axisLeft(yScale).tickFormat(d => d + "%"));
+
+      svg.append("text").attr("class", "axis-label").attr("text-anchor", "middle")
+        .attr("x", width / 2).attr("y", height + 45).text("ASSET ACQUISITION COST (USD)");
+        
+      svg.append("text").attr("class", "axis-label").attr("text-anchor", "middle")
+        .attr("transform", "rotate(-90)").attr("x", -height / 2).attr("y", -45).text("APPROVAL PERCENTAGE");
+
+      // Deploy targeted data points
+      svg.selectAll("circle").data(targets.sort((a,b) => b.owners - a.owners)).enter()
+        .append("circle")
+        .attr("cx", d => xScale(d.price))
+        .attr("cy", d => yScale(d.score))
+        .attr("r",  d => rScale(d.owners))
+        .attr("fill", d => genreScale(d.genre))
+        .attr("fill-opacity", 0.65)
+        .attr("stroke", d => genreScale(d.genre))
+        .attr("stroke-width", 1.5)
+        .on("mouseover", function(event, d) {
+          d3.select(this).raise().transition().duration(100).attr("fill-opacity", 1).attr("stroke-width", 3);
+          triggerTooltip(event, `
+            <h4>${d.name}</h4>
+            <p><span>Price:</span> <span class="highlight">${d.price === 0 ? "FREE ENTRY" : "$" + d.price.toFixed(2)}</span></p>
+            <p><span>Satisfaction:</span> <span class="highlight">${d.score}%</span></p>
+            <p><span>Operators:</span> <span class="highlight">~${(d.owners / 1000000).toFixed(2)}M</span></p>
+            <p><span>Category:</span> <span class="highlight">${d.genre}</span></p>
+            <div class="verdict">${d.score >= 85 ? ">>> MISSION SUCCESS // WIDELY APPROVED" : d.score >= 65 ? ">>> OPERATIONAL // VARIABLE RESULTS" : ">>> WARNING // NEGATIVE TRAJECTORY"}</div>
+          `);
+        })
+        .on("mousemove", repositionTooltip)
+        .on("mouseout", function() {
+          d3.select(this).transition().duration(100).attr("fill-opacity", 0.65).attr("stroke-width", 1.5);
+          clearTooltip();
+        });
+    }
+
+    refreshControls();
+    drawMatrix();
+    window.addEventListener("resize", drawMatrix);
+  }
+
+  // ================= RENDER CHART 2: GENRE SCORE BAR =================
+  function renderGenreScores() {
+    const categorized = d3.rollups(validReviews, v => d3.mean(v, a => a.score), a => a.genre)
+      .map(([genre, avg]) => ({ genre, avg: +avg.toFixed(1) }))
+      .filter(a => validReviews.filter(x => x.genre === a.genre).length >= 3)
+      .sort((a, b) => b.avg - a.avg);
+
+    const margin = { top: 20, right: 20, bottom: 70, left: 50 };
+    const height = 300;
+
+    function drawBars() {
+      const width = getSafeWidth("chart-score-genre") - margin.left - margin.right;
+      const wrap = d3.select("#chart-score-genre");
+      wrap.selectAll("*").remove();
+
+      const svg = wrap.append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      const xScale = d3.scaleBand().domain(categorized.map(d => d.genre)).range([0, width]).padding(0.3);
+      const yScale = d3.scaleLinear().domain([0, 100]).range([height, 0]);
+
+      svg.append("g").selectAll("line").data(yScale.ticks(5)).enter().append("line")
+        .attr("class", "grid-line").attr("x1", 0).attr("x2", width)
+        .attr("y1", d => yScale(d)).attr("y2", d => yScale(d));
+
+      svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(xScale).tickSize(0))
+        .selectAll("text").attr("transform", "rotate(-30)").attr("text-anchor", "end").attr("dy", "0.5em");
+
+      svg.append("g").attr("class", "axis").call(d3.axisLeft(yScale).ticks(5).tickFormat(d => d + "%"));
+
+      svg.selectAll("rect").data(categorized).enter().append("rect")
+        .attr("x", d => xScale(d.genre))
+        .attr("width", xScale.bandwidth())
+        .attr("y", d => yScale(d.avg))
+        .attr("height", d => height - yScale(d.avg))
+        .attr("fill", d => genreScale(d.genre))
+        .attr("fill-opacity", 0.8)
+        .on("mouseover", function(event, d) {
+          d3.select(this).attr("fill-opacity", 1);
+          triggerTooltip(event, `<h4>${d.genre}</h4><p><span>Mean Approval:</span> <span class="highlight">${d.avg}%</span></p>`);
+        })
+        .on("mousemove", repositionTooltip)
+        .on("mouseout", function() { d3.select(this).attr("fill-opacity", 0.8); clearTooltip(); });
+
+      svg.selectAll(".bar-lbl").data(categorized).enter().append("text")
+        .attr("class", "axis-label").attr("text-anchor", "middle").attr("font-size", "10px")
+        .attr("x", d => xScale(d.genre) + xScale.bandwidth() / 2)
+        .attr("y", d => yScale(d.avg) - 6).text(d => d.avg + "%");
+    }
+
+    drawBars();
+    window.addEventListener("resize", drawBars);
+  }
+
+  // ================= RENDER CHART 3: GENRE PRICE BAR =================
+  function renderGenrePrices() {
+    const categorized = d3.rollups(paidAssets, v => d3.mean(v, a => a.price), a => a.genre)
+      .map(([genre, avg]) => ({ genre, avg: +avg.toFixed(2) }))
+      .filter(a => paidAssets.filter(x => x.genre === a.genre).length >= 3)
+      .sort((a, b) => b.avg - a.avg);
+
+    const margin = { top: 20, right: 20, bottom: 70, left: 50 };
+    const height = 300;
+
+    function drawBars() {
+      const width = getSafeWidth("chart-price-genre") - margin.left - margin.right;
+      const wrap = d3.select("#chart-price-genre");
+      wrap.selectAll("*").remove();
+
+      const svg = wrap.append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      const xScale = d3.scaleBand().domain(categorized.map(d => d.genre)).range([0, width]).padding(0.3);
+      const yScale = d3.scaleLinear().domain([0, (d3.max(categorized, d => d.avg) || 60) * 1.15]).range([height, 0]);
+
+      svg.append("g").selectAll("line").data(yScale.ticks(5)).enter().append("line")
+        .attr("class", "grid-line").attr("x1", 0).attr("x2", width)
+        .attr("y1", d => yScale(d)).attr("y2", d => yScale(d));
+
+      svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(xScale).tickSize(0))
+        .selectAll("text").attr("transform", "rotate(-30)").attr("text-anchor", "end").attr("dy", "0.5em");
+
+      svg.append("g").attr("class", "axis").call(d3.axisLeft(yScale).ticks(5).tickFormat(d => "$" + d));
+
+      svg.selectAll("rect").data(categorized).enter().append("rect")
+        .attr("x", d => xScale(d.genre))
+        .attr("width", xScale.bandwidth())
+        .attr("y", d => yScale(d.avg))
+        .attr("height", d => height - yScale(d.avg))
+        .attr("fill", "var(--bf-orange)")
+        .attr("fill-opacity", 0.75)
+        .on("mouseover", function(event, d) {
+          d3.select(this).attr("fill-opacity", 1);
+          triggerTooltip(event, `<h4>${d.genre}</h4><p><span>Mean Cost:</span> <span class="highlight">$${d.avg}</span></p>`);
+        })
+        .on("mousemove", repositionTooltip)
+        .on("mouseout", function() { d3.select(this).attr("fill-opacity", 0.75); clearTooltip(); });
+
+      svg.selectAll(".bar-lbl").data(categorized).enter().append("text")
+        .attr("class", "axis-label").attr("text-anchor", "middle").attr("font-size", "10px")
+        .attr("x", d => xScale(d.genre) + xScale.bandwidth() / 2)
+        .attr("y", d => yScale(d.avg) - 6).text(d => "$" + d.avg);
+    }
+
+    drawBars();
+    window.addEventListener("resize", drawBars);
+  }
+
+  // ================= RENDER CHART 4: SCATTER OWNERS LOG =================
+  function renderOwnersScatter() {
+    const activeTargets = validReviews.filter(a => a.owners > 500);
+    renderLegend("owners-legend", Object.entries(tierColours));
+
+    const margin = { top: 20, right: 20, bottom: 60, left: 60 };
+    const height = 400;
+
+    function drawScatter() {
+      const width = getSafeWidth("chart-owners") - margin.left - margin.right;
+      const wrap = d3.select("#chart-owners");
+      wrap.selectAll("*").remove();
+
+      const svg = wrap.append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      const xScale = d3.scaleLog().domain([1000, d3.max(activeTargets, a => a.owners) || 150000000]).range([0, width]);
+      const yScale = d3.scaleLinear().domain([0, 100]).range([height, 0]);
+
+      svg.append("g").selectAll("line").data(yScale.ticks(5)).enter().append("line")
+        .attr("class", "grid-line").attr("x1", 0).attr("x2", width)
+        .attr("y1", d => yScale(d)).attr("y2", d => yScale(d));
+
+      svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(xScale).ticks(5, "~s").tickFormat(d => d >= 1000000 ? (d/1000000).toFixed(0) + "M" : d >= 1000 ? (d/1000).toFixed(0) + "K" : d));
+
+      svg.append("g").attr("class", "axis").call(d3.axisLeft(yScale).ticks(5).tickFormat(d => d + "%"));
+
+      svg.append("text").attr("class", "axis-label").attr("text-anchor", "middle")
+        .attr("x", width / 2).attr("y", height + 45).text("OPERATOR FORCE DEPLOYED (LOG SCALE)");
+        
+      svg.append("text").attr("class", "axis-label").attr("text-anchor", "middle")
+        .attr("transform", "rotate(-90)").attr("x", -height / 2).attr("y", -45).text("APPROVAL PERCENTAGE");
+
+      svg.selectAll("circle").data(activeTargets).enter().append("circle")
+        .attr("cx", d => xScale(Math.max(1000, d.owners)))
+        .attr("cy", d => yScale(d.score))
+        .attr("r", 5)
+        .attr("fill", d => tierColours[assignTier(d.price)])
+        .attr("fill-opacity", 0.7)
+        .attr("stroke", "#000").attr("stroke-width", 0.5)
+        .on("mouseover", function(event, d) {
+          d3.select(this).raise().transition().duration(100).attr("r", 8).attr("fill-opacity", 1);
+          triggerTooltip(event, `
+            <h4>${d.name}</h4>
+            <p><span>Tier:</span> <span class="highlight">${assignTier(d.price)}</span></p>
+            <p><span>Satisfaction:</span> <span class="highlight">${d.score}%</span></p>
+            <p><span>Operators:</span> <span class="highlight">~${(d.owners / 1000000).toFixed(2)}M</span></p>
+          `);
+        })
+        .on("mousemove", repositionTooltip)
+        .on("mouseout", function() {
+          d3.select(this).transition().duration(100).attr("r", 5).attr("fill-opacity", 0.7);
+          clearTooltip();
+        });
+    }
+
+    drawScatter();
+    window.addEventListener("resize", drawScatter);
+  }
+
+  // ================= RENDER CHART 5: HISTOGRAM BINS =================
+  function renderSentimentHistogram() {
+    const approvalScores = validReviews.map(a => a.score);
+    const margin = { top: 20, right: 20, bottom: 50, left: 50 };
+    const height = 300;
+
+    function drawHistogram() {
+      const width = getSafeWidth("chart-histogram") - margin.left - margin.right;
+      const wrap = d3.select("#chart-histogram");
+      wrap.selectAll("*").remove();
+
+      const svg = wrap.append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      const xScale = d3.scaleLinear().domain([0, 100]).range([0, width]);
+      const aggregatedBins = d3.bin().domain([0, 100]).thresholds(20)(approvalScores);
+      const yScale = d3.scaleLinear().domain([0, (d3.max(aggregatedBins, d => d.length) || 100) * 1.15]).range([height, 0]);
+
+      svg.append("g").selectAll("line").data(yScale.ticks(5)).enter().append("line")
+        .attr("class", "grid-line").attr("x1", 0).attr("x2", width)
+        .attr("y1", d => yScale(d)).attr("y2", d => yScale(d));
+
+      svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(xScale).tickFormat(d => d + "%"));
+
+      svg.append("g").attr("class", "axis").call(d3.axisLeft(yScale).ticks(5));
+
+      svg.append("text").attr("class", "axis-label").attr("text-anchor", "middle")
+        .attr("x", width / 2).attr("y", height + 40).text("APPROVAL FREQUENCY BRACKET");
+
+      function fetchBinTone(x0) {
+        if (x0 >= 80) return "var(--cod-green)";
+        if (x0 >= 55) return "var(--hud-cyan)";
+        return "var(--bf-orange)";
+      }
+
+      svg.selectAll("rect").data(aggregatedBins).enter().append("rect")
+        .attr("x", d => xScale(d.x0) + 1)
+        .attr("width", d => Math.max(0, xScale(d.x1) - xScale(d.x0) - 2))
+        .attr("y", d => yScale(d.length))
+        .attr("height", d => height - yScale(d.length))
+        .attr("fill", d => fetchBinTone(d.x0))
+        .attr("fill-opacity", 0.75)
+        .on("mouseover", function(event, d) {
+          d3.select(this).attr("fill-opacity", 1);
+          triggerTooltip(event, `<h4>ZONE: ${d.x0}% – ${d.x1}%</h4><p><span>Volume Detected:</span> <span class="highlight">${d.length} Assets</span></p>`);
+        })
+        .on("mousemove", repositionTooltip)
+        .on("mouseout", function() { d3.select(this).attr("fill-opacity", 0.75); clearTooltip(); });
+
+      // Signal Marker for Global Mean
+      const macroAvg = d3.mean(approvalScores) || 0;
+      svg.append("line")
+        .attr("x1", xScale(macroAvg)).attr("x2", xScale(macroAvg)).attr("y1", 0).attr("y2", height)
+        .attr("stroke", "#ffffff").attr("stroke-width", 2).attr("stroke-dasharray", "5 3");
+        
+      svg.append("text").attr("class", "axis-label")
+        .attr("x", xScale(macroAvg) + 8).attr("y", 15).attr("fill", "#ffffff").attr("font-size", "10px")
+        .text(`MEAN SENTIMENT: ${macroAvg.toFixed(1)}%`);
+    }
+
+    drawHistogram();
+    window.addEventListener("resize", drawHistogram);
+  }
+
+  // --- ENSURE LAYOUT ENGINES INITIALIZE SAFELY ---
+  setTimeout(() => {
+    renderBubbleScatter();
+    renderGenreScores();
+    renderGenrePrices();
+    renderOwnersScatter();
+    renderSentimentHistogram();
+  }, 50);
+
+}).catch(systemError => {
+  console.error("CRITICAL ACQUISITION FAILURE:", systemError);
+  document.body.innerHTML = `
+    <div style="background: rgba(255, 0, 0, 0.15); border: 2px solid var(--bf-orange); padding: 40px; text-align: center; max-width: 700px; margin: 100px auto; font-family: monospace;">
+      <h3 style="color: var(--bf-orange); font-size: 1.5rem; margin-bottom: 15px;">>>> TELEMETRY CORRUPT // FILE MISSING</h3>
+      <p style="color: #cbd5e1; font-size: 1rem; line-height: 1.5;">
+        The primary data targets (<strong>steam_games_2026.csv</strong> or <strong>steamgames2026.csv</strong>) failed to verify via local server protocols. Ensure valid assets reside directly alongside your root source file.
+      </p>
+    </div>
+  `;
+});
+</script>
+</body>
+</html>
